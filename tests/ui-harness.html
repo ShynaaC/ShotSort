@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>ShotSort — UI test harness</title></head>
+  <body>
+    <div style="padding:8px 16px;background:#fff2d7;font:12px system-ui;color:#725519">
+      UI TEST HARNESS — mock data; no files are touched.
+      <button id="capture-fixture" type="button">Simulate screenshot</button>
+      <button id="fail-start" type="button">Fail next start</button>
+      <output id="last-command" aria-live="polite"></output>
+    </div>
+    <div id="root"></div>
+    <script type="module" src="./ui-harness.tsx"></script>
+  </body>
+</html>

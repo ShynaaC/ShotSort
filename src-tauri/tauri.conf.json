@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "shotsort",
+  "productName": "ShotSort",
   "version": "0.1.0",
   "identifier": "com.shyna.shotsort",
   "build": {
@@ -12,13 +12,15 @@
   "app": {
     "windows": [
       {
-        "title": "shotsort",
-        "width": 800,
-        "height": 600
+        "title": "ShotSort",
+        "width": 1120,
+        "height": 760,
+        "minWidth": 760,
+        "minHeight": 560
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'"
     }
   },
   "bundle": {

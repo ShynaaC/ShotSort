@@ -1,91 +1,82 @@
-# Tauri + React + Typescript
-
-This template should help get you started developing with Tauri, React and Typescript in Vite.
-
-## Recommended IDE Setup
-
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
-
 # ShotSort
-# 📸 ShotSort
 
-**ShotSort** is a lightweight cross-platform desktop application that automatically organizes screenshots into user-defined assignment folders.
+A local desktop app that puts new screenshots into the session you are working on.
 
-Instead of manually sorting or deleting hundreds of screenshots at the end of the semester, simply select your current assignment in ShotSort and continue taking screenshots normally. The application monitors your default screenshots directory and instantly moves new screenshots to the active assignment folder.
+## Current scope
 
----
+This milestone is only screenshot storage and active sessions. PDF tools, OCR, duplicate cleanup, cloud accounts, and automatic deletion are out of scope.
 
-## ✨ Features
+- Choose a screenshot source and a separate storage folder with native folder dialogs.
+- Create named assignment sessions, each with its own folder.
+- Start, pause, and explicitly switch the active session.
+- Route new PNG, JPG, JPEG, and WebP files into the active session.
+- List screenshots, search filenames, show counts and storage totals, and open files or folders.
+- Persist folder settings and sessions locally. The app always reopens paused.
+- Prevent multiple ShotSort instances from routing the same files.
 
-- 📁 Create assignment folders directly from the app
-- 🔄 Switch active assignment with a single click
-- 👀 Real-time monitoring of the system screenshots directory
-- 🚀 Automatic screenshot organization
-- 🗑️ Rename and delete assignment folders
-- 📂 Open assignment folders directly from the application
-- 💾 Persistent configuration and assignment history
-- 🌙 Lightweight, modern desktop interface
+## Run on Windows
 
----
+Prerequisites: Node.js/npm, Rust, Microsoft C++ build tools, and WebView2 (the Tauri Windows prerequisites).
 
-## 🛠️ Tech Stack
+Run these commands from this directory, which contains package.json:
 
-### Frontend
-- React
-- TypeScript
-- Tailwind CSS
-- shadcn/ui
-
-### Desktop Framework
-- Tauri v2
-
-### Backend
-- Rust
-
-### Libraries
-- `notify` – File system monitoring
-- `serde` / `serde_json` – Configuration management
-- `tauri-plugin-fs` – File system operations
-- `tauri-plugin-dialog` – Native dialogs
-- `tauri-plugin-shell` – Opening folders and system integration
-
----
-
-## ⚙️ How It Works
-
-1. Launch ShotSort.
-2. Create an assignment folder.
-3. Select it as the active assignment.
-4. Continue taking screenshots normally.
-5. ShotSort automatically detects new screenshots and moves them into the selected assignment folder.
-
----
-
-## 📂 Project Structure
-
-```
-ShotSort/
-├── src/                # React frontend
-├── src-tauri/          # Rust backend
-├── public/
-├── README.md
-└── package.json
+```powershell
+npm install
+npm run tauri dev
 ```
 
----
+The repository is inside an outer directory also named shotsort. If you are in that outer directory, enter the inner shotsort directory first.
 
-## 🚧 Roadmap
+`npm run dev` runs only the web interface. The browser cannot access the native screenshot storage commands and shows a notice instead of pretending to move files.
 
-- [x] Assignment management
-- [x] Automatic screenshot organization
-- [ ] System tray support
-- [ ] Desktop notifications
-- [ ] Export screenshots to PDF
-- [ ] Keyboard shortcuts for quick assignment switching
-- [ ] Screenshot statistics
+## First session
 
----
+1. Choose a dedicated screenshot source, such as your actual Pictures/Screenshots folder. Check where your screenshot tool really saves files; it may use OneDrive.
+2. Choose an existing, separate folder for session storage.
+3. Create a named session.
+4. Click **Start session**, then save a screenshot using your usual screenshot tool.
+5. It should appear in the session after the file has remained unchanged for about two seconds.
+6. Use **Pause** to stop routing. Selecting a session in the sidebar only changes the view; **Switch routing here** changes the destination.
 
-## 📄 License
+Keep ShotSort open or minimized while working. Closing the window stops routing; system-tray/background-on-close support is not included.
 
-This project is licensed under the MIT License.
+## File safety and limits
+
+- Existing source filenames at start/resume are left alone. The app watches one folder, non-recursively, and treats every newly arriving supported image in it as a screenshot.
+- It does not capture clipboard-only screenshots; your screenshot tool must save a file.
+- Pending files keep the session they were first observed in when you switch sessions. Pausing cancels pending transfers; those files stay in the source.
+- Files are first written to temporary storage, flushed, and published without overwriting another file. Collisions get numbered names, such as Screenshot (1).png.
+- The source is removed only after the destination is saved and the source still has the expected size and modification time. If removal fails, both copies are retained and a warning is shown.
+- There is a short period with a temporary second copy, so transfers need enough free destination space. This is an organizer, not a compressor or disk cleaner.
+- Missing/unwritable folders and transfer errors are reported. A failed transfer is retried at most three times. Unmoved files remain in the source for manual review.
+- Settings are atomically saved to sessions.json in Tauri's app data directory. A damaged configuration is not silently overwritten.
+- Changing the storage root affects future sessions only. Existing session folders are not relocated.
+- Moves in OneDrive or other synced folders can propagate to your cloud storage and other devices.
+- Storage totals are logical file sizes, not guaranteed reclaimable disk space.
+
+## Implementation
+
+- React + TypeScript + Vite for the interface.
+- Tauri 2 + Rust for native commands and file operations.
+- notify for native folder events, with periodic reconciliation for missed events.
+- JSON for this small amount of session metadata; no database server or additional runtime.
+- No production browser mocks, external fonts, image services, or cloud backend.
+
+## Verification
+
+```powershell
+npm run build
+cd src-tauri
+cargo fmt -- --check
+cargo test --lib
+```
+
+The Rust suite covers real temporary-file transfers, existing-file preservation, pause/resume, session persistence, in-flight session switching, name collisions, incomplete writes, missing destinations, path validation, damaged settings, and the actual background watcher.
+
+For repeatable interface checks, run the Vite dev server and open:
+
+`http://127.0.0.1:1420/tests/ui-harness.html`
+
+The clearly labelled development-only harness mocks IPC, never touches files, and is not included in the production build. It supports folder setup, session creation, start/pause/switch, simulated incoming screenshots, and a failed-start scenario. Native behavior is verified separately by the Rust tests.
+
+Before distributing an installer, manually check native folder dialogs, opening images in the OS viewer, and the workflow with your real screenshot tool in the desktop app.
