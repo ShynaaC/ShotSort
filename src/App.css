@@ -21,6 +21,7 @@ h1, h2, h3, p { margin: 0; }
 .counter { letter-spacing: 0; font-size: 10px; background: #e2e8de; border-radius: 5px; min-width: 21px; text-align: center; padding: 1px 5px; }
 .new-session { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; background: #fff; border: 1px solid #d9e2d5; border-radius: 8px; padding: 10px; font-size: 12px; font-weight: 650; }
 .new-session:hover:not(:disabled) { background: #e8eee3; }
+.quick-session { margin-top: 8px; color: #3f6549; background: #e7eedf; border-color: #d5e1cc; }
 .session-nav { margin-top: 16px; overflow-y: auto; flex: 1; }
 .session-item { display: flex; align-items: center; gap: 11px; width: 100%; border: 1px solid transparent; background: transparent; text-align: left; padding: 12px 10px; border-radius: 8px; margin-bottom: 5px; color: #6e8075; }
 .session-item:hover { background: #e8ede4; }
@@ -126,6 +127,14 @@ tr:hover td { background: #fcfdf9; }
 .form-note svg { flex-shrink: 0; margin-top: 3px; }
 .form-note strong { font-weight: 500; color: #61774f; }
 .break-path { overflow-wrap: anywhere; }
+.storage-options { border: 0; padding: 0; margin: 23px 0 0; }
+.storage-options legend { font-size: 12px; font-weight: 650; margin-bottom: 3px; }
+.dialog .storage-option { display: flex; align-items: flex-start; gap: 10px; margin-top: 10px; border: 1px solid #dce4d3; border-radius: 7px; padding: 11px 12px; cursor: pointer; }
+.storage-option:has(input:checked) { background: #eff4e7; border-color: #aabd9e; }
+.storage-option input { margin-top: 3px; accent-color: #2f5843; }
+.storage-option strong { display: block; font-size: 11px; font-weight: 650; }
+.storage-option small { display: block; font-size: 10px; font-weight: 400; color: #75816c; margin-top: 3px; }
+.managed-path { font-size: 10px; line-height: 1.8; color: #75816c; margin-top: 12px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 27px; padding-top: 19px; border-top: 1px solid #e5eadc; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 @media (min-width: 1400px) {

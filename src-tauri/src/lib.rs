@@ -48,6 +48,11 @@ async fn start_session(state: tauri::State<'_, AppState>, id: String) -> Result<
 }
 
 #[tauri::command]
+async fn create_quick_session(state: tauri::State<'_, AppState>) -> Result<String, String> {
+    lock(&state)?.create_quick_session()
+}
+
+#[tauri::command]
 async fn pause_session(state: tauri::State<'_, AppState>) -> Result<(), String> {
     lock(&state)?.pause();
     Ok(())
@@ -196,6 +201,7 @@ pub fn run() {
             get_state,
             configure_folders,
             create_session,
+            create_quick_session,
             start_session,
             pause_session,
             choose_folder,

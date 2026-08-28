@@ -15,6 +15,8 @@ const SETTLE_TIME: Duration = Duration::from_secs(2);
 pub struct Config {
     pub source_dir: Option<PathBuf>,
     pub storage_dir: Option<PathBuf>,
+    #[serde(default)]
+    pub managed_storage: bool,
     pub active_session_id: Option<String>,
     pub sessions: Vec<Session>,
 }
@@ -51,6 +53,8 @@ pub struct SessionView {
 pub struct Snapshot {
     pub source_dir: Option<PathBuf>,
     pub storage_dir: Option<PathBuf>,
+    pub managed_storage: bool,
+    pub default_storage_dir: PathBuf,
     pub active_session_id: Option<String>,
     pub monitoring: bool,
     pub pending_count: usize,
@@ -173,12 +177,25 @@ impl Storage {
         Ok(())
     }
 
+    fn default_storage_dir(&self) -> PathBuf {
+        self.config_path.with_file_name("sessions")
+    }
+
     pub fn configure(&mut self, source: &str, destination: &str) -> Result<()> {
         if self.monitoring {
             return Err("Pause the session before changing folders.".into());
         }
         let source = canonical_dir(source)?;
-        let destination = canonical_dir(destination)?;
+        let managed_storage = destination.trim().is_empty();
+        let destination = if managed_storage {
+            let folder = self.default_storage_dir();
+            fs::create_dir_all(&folder)
+                .map_err(|e| format!("Cannot create ShotSort's session storage: {e}"))?;
+            fs::canonicalize(&folder)
+                .map_err(|e| format!("Cannot access ShotSort's session storage: {e}"))?
+        } else {
+            canonical_dir(destination)?
+        };
         if overlaps(&source, &destination) {
             return Err(
                 "Choose separate screenshot and storage folders; neither may contain the other."
@@ -202,10 +219,27 @@ impl Storage {
         let mut next = self.config.clone();
         next.source_dir = Some(source);
         next.storage_dir = Some(destination);
+        next.managed_storage = managed_storage;
         self.save(&next)?;
         self.config = next;
         self.last_error = None;
         Ok(())
+    }
+
+    pub fn create_quick_session(&mut self) -> Result<String> {
+        let mut number = self.config.sessions.len() + 1;
+        loop {
+            let name = format!("Quick session {number}");
+            if !self
+                .config
+                .sessions
+                .iter()
+                .any(|session| session.name == name)
+            {
+                return self.create_session(&name);
+            }
+            number += 1;
+        }
     }
 
     pub fn create_session(&mut self, name: &str) -> Result<String> {
@@ -461,6 +495,8 @@ impl Storage {
         Snapshot {
             source_dir: self.config.source_dir.clone(),
             storage_dir: self.config.storage_dir.clone(),
+            managed_storage: self.config.managed_storage,
+            default_storage_dir: self.default_storage_dir(),
             active_session_id: self.config.active_session_id.clone(),
             monitoring: self.monitoring,
             pending_count: self.pending.len(),
@@ -722,5 +758,77 @@ mod tests {
             fs::read_to_string(&f.storage.config_path).unwrap(),
             "broken json"
         );
+    }
+
+    #[test]
+    fn managed_storage_and_quick_sessions_need_no_precreated_destination() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("screenshots");
+        fs::create_dir(&source).unwrap();
+        let config_path = temp.path().join("app-data/sessions.json");
+        let mut storage = Storage::load(config_path.clone()).unwrap();
+        assert!(!storage.default_storage_dir().exists());
+        storage.configure(source.to_str().unwrap(), "").unwrap();
+        assert!(storage.config.managed_storage);
+        assert!(storage.config.storage_dir.as_ref().unwrap().is_dir());
+        let first = storage.create_quick_session().unwrap();
+        let second = storage.create_quick_session().unwrap();
+        assert_ne!(first, second);
+        assert_eq!(storage.session(&first).unwrap().name, "Quick session 1");
+        assert_eq!(storage.session(&second).unwrap().name, "Quick session 2");
+        assert!(!storage.monitoring);
+        let folder = storage.session(&first).unwrap().folder.clone();
+        fs::write(folder.join("keep.png"), b"keep after closing").unwrap();
+        drop(storage);
+        let restored = Storage::load(config_path).unwrap();
+        assert!(restored.config.managed_storage);
+        assert_eq!(restored.config.sessions.len(), 2);
+        assert_eq!(
+            fs::read(folder.join("keep.png")).unwrap(),
+            b"keep after closing"
+        );
+        assert!(!restored.monitoring);
+    }
+
+    #[test]
+    fn switching_to_managed_storage_does_not_relocate_old_sessions() {
+        let mut f = Fixture::new();
+        let id = f.storage.create_session("Existing assignment").unwrap();
+        let original = f.storage.session(&id).unwrap().folder.clone();
+        fs::write(original.join("keep.png"), b"original bytes").unwrap();
+        f.storage.configure(f.source.to_str().unwrap(), "").unwrap();
+        let quick = f.storage.create_quick_session().unwrap();
+        assert_eq!(f.storage.session(&id).unwrap().folder, original);
+        assert_eq!(
+            fs::read(original.join("keep.png")).unwrap(),
+            b"original bytes"
+        );
+        assert!(f
+            .storage
+            .session(&quick)
+            .unwrap()
+            .folder
+            .starts_with(f.storage.config.storage_dir.as_ref().unwrap()));
+    }
+
+    #[test]
+    fn old_configuration_keeps_custom_storage() {
+        let f = Fixture::new();
+        let mut old = serde_json::to_value(&f.storage.config).unwrap();
+        old.as_object_mut().unwrap().remove("managedStorage");
+        fs::write(&f.storage.config_path, serde_json::to_vec(&old).unwrap()).unwrap();
+        let restored = Storage::load(f.storage.config_path.clone()).unwrap();
+        assert!(!restored.config.managed_storage);
+        assert_eq!(restored.config.storage_dir, f.storage.config.storage_dir);
+    }
+
+    #[test]
+    fn failed_managed_folder_creation_preserves_previous_settings() {
+        let mut f = Fixture::new();
+        let original = f.storage.config.storage_dir.clone();
+        fs::write(f.storage.default_storage_dir(), b"not a directory").unwrap();
+        assert!(f.storage.configure(f.source.to_str().unwrap(), "").is_err());
+        assert_eq!(f.storage.config.storage_dir, original);
+        assert!(!f.storage.config.managed_storage);
     }
 }

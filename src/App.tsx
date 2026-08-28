@@ -6,10 +6,11 @@ type Session = { id: string; name: string; folder: string; createdAt: number; co
 type Screenshot = { name: string; bytes: number; modifiedAt: number };
 type Snapshot = {
   sourceDir: string | null; storageDir: string | null; activeSessionId: string | null;
+  managedStorage: boolean; defaultStorageDir: string;
   monitoring: boolean; pendingCount: number; sessions: Session[];
   screenshots: Screenshot[]; lastError: string | null;
 };
-const empty: Snapshot = { sourceDir: null, storageDir: null, activeSessionId: null, monitoring: false, pendingCount: 0, sessions: [], screenshots: [], lastError: null };
+const empty: Snapshot = { sourceDir: null, storageDir: null, activeSessionId: null, managedStorage: true, defaultStorageDir: "", monitoring: false, pendingCount: 0, sessions: [], screenshots: [], lastError: null };
 const desktop = isTauri();
 
 function bytes(value: number) {
@@ -45,6 +46,7 @@ function App() {
   const [modal, setModal] = useState<"folders" | "session" | null>(null);
   const [source, setSource] = useState("");
   const [destination, setDestination] = useState("");
+  const [managedStorage, setManagedStorage] = useState(true);
   const [name, setName] = useState("");
   const [filter, setFilter] = useState("");
   const dialog = useRef<HTMLDialogElement>(null);
@@ -97,7 +99,8 @@ function App() {
   function folderSetup() {
     setError(null);
     setSource(data.sourceDir ? displayPath(data.sourceDir) : "");
-    setDestination(data.storageDir ? displayPath(data.storageDir) : "");
+    setDestination(data.storageDir && !data.managedStorage ? displayPath(data.storageDir) : "");
+    setManagedStorage(!data.storageDir || data.managedStorage);
     setModal("folders");
   }
   async function browse(target: "source" | "destination") {
@@ -120,6 +123,7 @@ function App() {
         <div className="brand"><span className="brand-mark"><Icon kind="image" size={23} /></span><span>ShotSort<span className="brand-caption">A place for every screenshot.</span></span></div>
         <div className="sidebar-heading"><span>YOUR SESSIONS</span><span className="counter">{data.sessions.length}</span></div>
         <button className="new-session" disabled={!configured || busy || !desktop} onClick={() => { setName(""); setError(null); setModal("session"); }}><Icon kind="plus" size={18} /> New session</button>
+        <button className="new-session quick-session" disabled={!configured || busy || !desktop} onClick={() => void perform(async () => { const id = await invoke<string>("create_quick_session"); select(id); setNotice(data.monitoring ? "Quick session created. Use Switch routing here when ready; your current session is still active." : "Quick session created. Click Start session when ready. Your screenshots stay saved after closing the app."); })}><Icon kind="image" size={18} /> Quick session</button>
         <nav className="session-nav" aria-label="Sessions">
           {data.sessions.map(session => <button key={session.id} className={`session-item ${selectedId === session.id ? "selected" : ""}`} onClick={() => select(session.id)} aria-current={selectedId === session.id ? "page" : undefined}>
             <Icon kind="folder" size={19} /><span className="session-name">{session.name}<small>{session.count} screenshot{session.count !== 1 ? "s" : ""}</small></span>
@@ -141,9 +145,9 @@ function App() {
             {data.monitoring ? <button className="button secondary" disabled={busy} onClick={() => void perform(async () => { await invoke("pause_session"); setNotice("Paused. New screenshots will stay in your screenshot source folder."); })}><Icon kind="pause" size={16} /> Pause</button> : selected && <button className="button primary" disabled={busy || !desktop || !!selected.error} onClick={() => void perform(async () => { await invoke("start_session", { id: selected.id }); })}><Icon kind="play" size={16} /> Start session</button>}
           </section>
           {loading ? <div className="empty-state"><span className="eyebrow">OPENING YOUR WORKSPACE</span><h2>Loading sessions…</h2></div> : !configured ? <section className="setup-card">
-            <div className="setup-illustration" aria-hidden="true"><span className="paper paper-back"><Icon kind="image" size={30} /></span><span className="paper paper-front"><Icon kind="folder" size={36} /></span></div><span className="eyebrow">A QUICK, ONE-TIME SETUP</span><h2>Two folders. A little more order.</h2><p>Tell ShotSort where screenshots arrive and where you want your assignment sessions stored.</p>
-            <div className="setup-steps"><div><span>01</span><strong>Your screenshot folder</strong><p>The folder your screenshot tool saves to.</p></div><div><span>02</span><strong>Your session storage</strong><p>A separate folder for organized assignments.</p></div></div>
-            <button className="button primary" onClick={folderSetup} disabled={!desktop || busy}><Icon kind="folder" size={17} /> Choose my folders</button><small>No uploads. No changes to existing screenshots.</small>
+            <div className="setup-illustration" aria-hidden="true"><span className="paper paper-back"><Icon kind="image" size={30} /></span><span className="paper paper-front"><Icon kind="folder" size={36} /></span></div><span className="eyebrow">A QUICK, ONE-TIME SETUP</span><h2>We’ll handle the folders.</h2><p>Choose where your screenshot tool already saves files. ShotSort creates and manages session storage for you.</p>
+            <div className="setup-steps"><div><span>01</span><strong>Choose your screenshot source</strong><p>Use its existing folder. No new folder needed.</p></div><div><span>02</span><strong>Create a session in the app</strong><p>Pick a name or use Quick session. We create its folder.</p></div></div>
+            <button className="button primary" onClick={folderSetup} disabled={!desktop || busy}><Icon kind="folder" size={17} /> Set up screenshots</button><small>No uploads. Nothing is deleted when you close the app.</small>
           </section> : !selected ? <section className="empty-state"><span className="empty-icon"><Icon kind="folder" size={35} /></span><h2>Your first session starts here.</h2><p>Give your assignment a name, then start the session.<br />New screenshots will have a place to land.</p><button className="button primary" onClick={() => { setName(""); setError(null); setModal("session"); }} disabled={busy}><Icon kind="plus" size={17} /> Create a session</button></section> : <>
             <div className="session-summary"><div><span className="stat-value">{selected.count}</span><span>screenshots</span></div><span className="summary-divider" /><div><span className="stat-value">{bytes(selected.bytes)}</span><span>in this session</span></div><div className="created-date">Created {new Date(selected.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</div></div>
             {selected.error && <div className="banner error" role="alert">This session’s folder is unavailable. Its saved record is preserved. {selected.error}</div>}
@@ -158,12 +162,16 @@ function App() {
       <dialog ref={dialog} className="dialog" onCancel={event => { if (busy) event.preventDefault(); else { setModal(null); setError(null); } }} onClose={() => { setModal(null); setError(null); }}>
         <div className="dialog-heading"><div><p className="eyebrow">{modal === "folders" ? "YOUR FILES, YOUR FOLDERS" : "ONE ASSIGNMENT, ONE PLACE"}</p><h2>{modal === "folders" ? "Folder setup" : "Create a session"}</h2></div><button className="icon-button" aria-label="Close dialog" disabled={busy} onClick={() => { setModal(null); setError(null); }}><Icon kind="close" /></button></div>
         {error && <div className="banner error" role="alert">{error}</div>}
-        {modal === "folders" ? <form onSubmit={event => { event.preventDefault(); void perform(async () => { await invoke("configure_folders", { source, destination }); setModal(null); setNotice("Folders saved. Create a session to get started; existing screenshots haven’t been moved."); }); }}>
+        {modal === "folders" ? <form onSubmit={event => { event.preventDefault(); void perform(async () => { await invoke("configure_folders", { source, destination: managedStorage ? "" : destination }); setModal(null); setNotice(managedStorage ? "Ready. ShotSort has created your session storage. Use Quick session or create a named session." : "Folders saved. Each new session gets its own folder automatically."); }); }}>
           <label htmlFor="source-folder">Screenshot source</label><p className="field-help">Choose the dedicated folder your screenshot tool saves to. All new PNG, JPG, JPEG, and WebP files in this folder are routed.</p><div className="path-input"><input id="source-folder" placeholder="e.g. Pictures\Screenshots" value={source} required onChange={event => setSource(event.target.value)} disabled={busy} /><button type="button" className="button secondary" onClick={() => void browse("source")} disabled={busy}>Browse</button></div>
-          <label htmlFor="storage-folder">Session storage</label><p className="field-help">ShotSort creates a folder here for each session. Use a separate folder, not one inside the screenshot source.</p><div className="path-input"><input id="storage-folder" placeholder="e.g. Documents\Assignments" value={destination} required onChange={event => setDestination(event.target.value)} disabled={busy} /><button type="button" className="button secondary" onClick={() => void browse("destination")} disabled={busy}>Browse</button></div>
+          <fieldset className="storage-options" disabled={busy}><legend>Session storage</legend>
+            <label className="storage-option"><input type="radio" name="storage-mode" checked={managedStorage} onChange={() => setManagedStorage(true)} /><span><strong>Let ShotSort manage it</strong><small>Recommended · created automatically, kept after closing.</small></span></label>
+            <label className="storage-option"><input type="radio" name="storage-mode" checked={!managedStorage} onChange={() => setManagedStorage(false)} /><span><strong>Choose my own location</strong><small>Use an existing folder for new sessions.</small></span></label>
+          </fieldset>
+          {managedStorage ? <p className="managed-path">Session folders will be created in<br /><span className="break-path">{displayPath(data.defaultStorageDir || null)}</span></p> : <><label htmlFor="storage-folder">Storage location</label><div className="path-input"><input id="storage-folder" placeholder="e.g. Documents\Assignments" value={destination} required onChange={event => setDestination(event.target.value)} disabled={busy} /><button type="button" className="button secondary" onClick={() => void browse("destination")} disabled={busy}>Browse</button></div></>}
           <div className="form-note">New screenshots are moved after they finish saving. Existing screenshots stay untouched. Moves in a synced folder, such as OneDrive, may also sync to other devices.{data.sessions.length > 0 && " Changing storage only affects future sessions; existing session folders stay where they are."}</div>
-          <div className="dialog-actions"><button type="button" className="button secondary" disabled={busy} onClick={() => { setModal(null); setError(null); }}>Cancel</button><button type="submit" className="button primary" disabled={busy || !source.trim() || !destination.trim()}>{busy ? "Saving…" : "Save folders"}</button></div>
-        </form> : <form onSubmit={event => { event.preventDefault(); void perform(async () => { const id = await invoke<string>("create_session", { name }); select(id); setModal(null); setNotice("Session created. Click Start session when you’re ready to save screenshots to it."); }); }}>
+          <div className="dialog-actions"><button type="button" className="button secondary" disabled={busy} onClick={() => { setModal(null); setError(null); }}>Cancel</button><button type="submit" className="button primary" disabled={busy || !source.trim() || (!managedStorage && !destination.trim())}>{busy ? "Saving…" : "Save setup"}</button></div>
+        </form> : <form onSubmit={event => { event.preventDefault(); void perform(async () => { const id = await invoke<string>("create_session", { name }); select(id); setModal(null); setNotice("Session created. Start it or switch routing here when you’re ready."); }); }}>
           <label htmlFor="session-name">Session name</label><input autoFocus id="session-name" className="name-input" placeholder="e.g. DBMS · Assignment 04" value={name} required maxLength={80} onChange={event => setName(event.target.value)} disabled={busy} /><p className="field-help">Use an assignment, subject, or project name you’ll recognize.</p><div className="form-note"><Icon kind="folder" size={18} /><span>A new session folder will be created in<br /><strong className="break-path">{displayPath(data.storageDir)}</strong></span></div><div className="dialog-actions"><button type="button" className="button secondary" disabled={busy} onClick={() => { setModal(null); setError(null); }}>Cancel</button><button type="submit" className="button primary" disabled={busy || !name.trim()}>{busy ? "Creating…" : "Create session"}</button></div>
         </form>}
       </dialog>

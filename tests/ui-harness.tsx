@@ -10,12 +10,13 @@ type SessionFixture = { id: string; name: string; folder: string; createdAt: num
 const state = {
   sourceDir: null as string | null,
   storageDir: null as string | null,
+  managedStorage: false,
+  defaultStorageDir: "C:\\ShotSort-test\\AppData\\sessions",
   activeSessionId: null as string | null,
   monitoring: false,
   sessions: [] as SessionFixture[],
 };
 let failStart = false;
-let folderPicks = 0;
 let shotNumber = 0;
 const output = document.querySelector<HTMLOutputElement>("#last-command")!;
 
@@ -30,10 +31,19 @@ mockIPC((command, input) => {
       pendingCount: 0,
       lastError: null,
     };
-    case "choose_folder": return ++folderPicks % 2 ? "C:\\ShotSort-test\\Screenshots" : "C:\\ShotSort-test\\Assignments";
+    case "choose_folder": return "C:\\ShotSort-test\\Screenshots";
     case "configure_folders":
       if (args.source === args.destination) throw new Error("Choose separate screenshot and storage folders.");
-      state.sourceDir = args.source; state.storageDir = args.destination; return;
+      state.sourceDir = args.source;
+      state.managedStorage = !args.destination;
+      state.storageDir = args.destination || state.defaultStorageDir;
+      return;
+    case "create_quick_session": {
+      const number = state.sessions.length + 1;
+      const id = `session-${number}`;
+      state.sessions.unshift({ id, name: `Quick session ${number}`, folder: `${state.storageDir}\\${id}`, createdAt: Date.now(), files: [] });
+      return id;
+    }
     case "create_session": {
       const id = `session-${state.sessions.length + 1}`;
       state.sessions.unshift({ id, name: args.name.trim(), folder: `${state.storageDir}\\${id}`, createdAt: Date.now(), files: [] });

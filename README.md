@@ -6,8 +6,9 @@ A local desktop app that puts new screenshots into the session you are working o
 
 This milestone is only screenshot storage and active sessions. PDF tools, OCR, duplicate cleanup, cloud accounts, and automatic deletion are out of scope.
 
-- Choose a screenshot source and a separate storage folder with native folder dialogs.
+- Choose your existing screenshot source with a native folder dialog. ShotSort creates its own session storage automatically, or you can select a custom location.
 - Create named assignment sessions, each with its own folder.
+- Use **Quick session** to create an automatically named session without opening File Explorer or typing a name. Start it explicitly when ready; no files are deleted on close.
 - Start, pause, and explicitly switch the active session.
 - Route new PNG, JPG, JPEG, and WebP files into the active session.
 - List screenshots, search filenames, show counts and storage totals, and open files or folders.
@@ -32,8 +33,8 @@ The repository is inside an outer directory also named shotsort. If you are in t
 ## First session
 
 1. Choose a dedicated screenshot source, such as your actual Pictures/Screenshots folder. Check where your screenshot tool really saves files; it may use OneDrive.
-2. Choose an existing, separate folder for session storage.
-3. Create a named session.
+2. Leave **Let ShotSort manage it** selected and save setup. No destination folder needs to be created manually. You can alternatively choose an existing, separate storage location.
+3. Click **Quick session** for an automatic name and folder, or **New session** to choose a name.
 4. Click **Start session**, then save a screenshot using your usual screenshot tool.
 5. It should appear in the session after the file has remained unchanged for about two seconds.
 6. Use **Pause** to stop routing. Selecting a session in the sidebar only changes the view; **Switch routing here** changes the destination.
@@ -50,6 +51,7 @@ Keep ShotSort open or minimized while working. Closing the window stops routing;
 - There is a short period with a temporary second copy, so transfers need enough free destination space. This is an organizer, not a compressor or disk cleaner.
 - Missing/unwritable folders and transfer errors are reported. A failed transfer is retried at most three times. Unmoved files remain in the source for manual review.
 - Settings are atomically saved to sessions.json in Tauri's app data directory. A damaged configuration is not silently overwritten.
+- Managed session folders live in a sessions directory alongside that settings file. Quick sessions use normal persistent storage, not the OS temporary directory. They remain after restarting; no expiry or automatic deletion is enabled.
 - Changing the storage root affects future sessions only. Existing session folders are not relocated.
 - Moves in OneDrive or other synced folders can propagate to your cloud storage and other devices.
 - Storage totals are logical file sizes, not guaranteed reclaimable disk space.
@@ -71,12 +73,12 @@ cargo fmt -- --check
 cargo test --lib
 ```
 
-The Rust suite covers real temporary-file transfers, existing-file preservation, pause/resume, session persistence, in-flight session switching, name collisions, incomplete writes, missing destinations, path validation, damaged settings, and the actual background watcher.
+The Rust suite covers real temporary-file transfers, existing-file preservation, pause/resume, session persistence, in-flight session switching, name collisions, incomplete writes, missing destinations, path validation, damaged settings, and the actual background watcher. It also checks automatic folder creation, quick-session persistence, old configurations, preserving existing session locations, and failed folder creation.
 
 For repeatable interface checks, run the Vite dev server and open:
 
 `http://127.0.0.1:1420/tests/ui-harness.html`
 
-The clearly labelled development-only harness mocks IPC, never touches files, and is not included in the production build. It supports folder setup, session creation, start/pause/switch, simulated incoming screenshots, and a failed-start scenario. Native behavior is verified separately by the Rust tests.
+The clearly labelled development-only harness mocks IPC, never touches files, and is not included in the production build. It supports managed/custom folder setup, named and quick session creation, start/pause/switch, simulated incoming screenshots, and a failed-start scenario. Native behavior is verified separately by the Rust tests.
 
 Before distributing an installer, manually check native folder dialogs, opening images in the OS viewer, and the workflow with your real screenshot tool in the desktop app.
