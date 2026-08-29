@@ -16,6 +16,7 @@ This milestone is only screenshot storage and active sessions. PDF tools, OCR, d
 - Review all session storage in one cleanup view, sort by size or age, and open the existing deletion confirmation from any row.
 - Persist folder settings and sessions locally. The app always reopens paused.
 - Prevent multiple ShotSort instances from routing the same files.
+- Keep routing when the main window is closed, with a native tray menu for status, pause, reopening ShotSort, and explicitly quitting.
 
 ## Run on Windows
 
@@ -42,7 +43,7 @@ The repository is inside an outer directory also named shotsort. If you are in t
 6. Use **Pause** to stop routing. Selecting a session in the sidebar only changes the view; **Switch routing here** changes the destination.
 7. When a session is finished, click **Delete**, review the folder total, and confirm **Move to Recycle Bin**. Deleting the active session pauses routing first.
 
-Keep ShotSort open or minimized while working. Closing the window stops routing; system-tray/background-on-close support is not included.
+Keep ShotSort running while working. Closing the window hides it in the system tray and does not interrupt the active session. Left-click the tray icon or choose **Open ShotSort** to return. The tray menu also provides **Pause routing** and **Quit ShotSort**; quitting stops routing completely. Windows may place the icon inside the tray overflow menu.
 
 ## File safety and limits
 

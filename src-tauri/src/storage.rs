@@ -686,6 +686,7 @@ impl Storage {
         Ok(resolved)
     }
 
+    #[cfg(test)]
     pub fn snapshot(&self, selected_id: Option<&str>) -> Snapshot {
         self.snapshot_with_storage(selected_id, false)
     }
