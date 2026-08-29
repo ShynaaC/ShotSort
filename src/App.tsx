@@ -4,6 +4,7 @@ import "./App.css";
 
 type Session = { id: string; name: string; folder: string; createdAt: number; count: number; bytes: number; error: string | null };
 type Screenshot = { name: string; bytes: number; modifiedAt: number };
+type DeletionPreview = { id: string; name: string; folder: string; fileCount: number; bytes: number; isActive: boolean };
 type Snapshot = {
   sourceDir: string | null; storageDir: string | null; activeSessionId: string | null;
   managedStorage: boolean; defaultStorageDir: string;
@@ -21,7 +22,7 @@ function bytes(value: number) {
 function displayPath(path: string | null) {
   return path?.replace(/^\\\\\?\\UNC\\/, "\\\\").replace(/^\\\\\?\\/, "") ?? "Not selected";
 }
-function Icon({ kind, size = 20 }: { kind: "folder" | "image" | "plus" | "play" | "pause" | "settings" | "arrow" | "check" | "close"; size?: number }) {
+function Icon({ kind, size = 20 }: { kind: "folder" | "image" | "plus" | "play" | "pause" | "settings" | "arrow" | "check" | "close" | "trash"; size?: number }) {
   const paths = {
     folder: <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10H3V7Z" />,
     image: <><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="8" cy="8" r="1.5" /><path d="m3 17 5-5 4 4 3-3 6 6" /></>,
@@ -32,6 +33,7 @@ function Icon({ kind, size = 20 }: { kind: "folder" | "image" | "plus" | "play" 
     arrow: <path d="M7 17 17 7M7 7h10v10" />,
     check: <path d="m5 12 4 4L19 6" />,
     close: <path d="m6 6 12 12M6 18 18 6" />,
+    trash: <><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13" /><path d="M10 11v5M14 11v5" /></>,
   };
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[kind]}</svg>;
 }
@@ -49,7 +51,9 @@ function App() {
   const [managedStorage, setManagedStorage] = useState(true);
   const [name, setName] = useState("");
   const [filter, setFilter] = useState("");
+  const [deletePreview, setDeletePreview] = useState<DeletionPreview | null>(null);
   const dialog = useRef<HTMLDialogElement>(null);
+  const deleteDialog = useRef<HTMLDialogElement>(null);
   const selectedRef = useRef<string | null>(null);
   const requestRef = useRef(0);
 
@@ -82,6 +86,10 @@ function App() {
     }
     else dialog.current?.close();
   }, [modal]);
+  useEffect(() => {
+    if (deletePreview) deleteDialog.current?.showModal();
+    else deleteDialog.current?.close();
+  }, [deletePreview]);
 
   function select(id: string) {
     selectedRef.current = id;
@@ -137,10 +145,10 @@ function App() {
         <header className="topbar"><span>YOUR SCREENSHOT WORKSPACE</span><span className="offline-badge"><span /> Local storage</span></header>
         <div className="page-content">
           {!desktop && <div className="banner info" role="status">You’re viewing the interface in a browser. Folder access and screenshot routing work in the desktop app. Run <code>npm run tauri dev</code> to use them.</div>}
-          {error && !modal && <div className="banner error" role="alert"><span>{error}</span><button aria-label="Dismiss error" onClick={() => setError(null)}><Icon kind="close" size={16} /></button></div>}
+          {error && !modal && !deletePreview && <div className="banner error" role="alert"><span>{error}</span><button aria-label="Dismiss error" onClick={() => setError(null)}><Icon kind="close" size={16} /></button></div>}
           {data.lastError && <div className="banner error" role="alert">{data.lastError}</div>}
           {notice && <div className="banner info" role="status">{notice}</div>}
-          <div className="page-title"><div><p className="eyebrow">LESS CLUTTER. MORE FOCUS.</p><h1>{selected?.name ?? "Make room for your work."}</h1><p className="subtitle">{selected ? "Your screenshots, together in one session." : "Keep screenshots with the assignment they belong to."}</p></div>{selected && <button className="button secondary" disabled={busy || !!selected.error} onClick={() => void perform(async () => { await invoke("open_session_folder", { id: selected.id }); })}><Icon kind="folder" size={17} /> Open folder <Icon kind="arrow" size={15} /></button>}</div>
+          <div className="page-title"><div><p className="eyebrow">LESS CLUTTER. MORE FOCUS.</p><h1>{selected?.name ?? "Make room for your work."}</h1><p className="subtitle">{selected ? "Your screenshots, together in one session." : "Keep screenshots with the assignment they belong to."}</p></div>{selected && <div className="title-actions"><button className="button danger-secondary" disabled={busy || !!selected.error} onClick={() => void perform(async () => { setDeletePreview(await invoke<DeletionPreview>("get_deletion_preview", { id: selected.id })); })}><Icon kind="trash" size={16} /> Delete</button><button className="button secondary" disabled={busy || !!selected.error} onClick={() => void perform(async () => { await invoke("open_session_folder", { id: selected.id }); })}><Icon kind="folder" size={17} /> Open folder <Icon kind="arrow" size={15} /></button></div>}</div>
           <section className={`capture-bar ${data.monitoring ? "running" : ""}`} aria-label="Screenshot routing"><span className={`capture-icon ${data.monitoring ? "running" : ""}`}><Icon kind={data.monitoring ? "image" : "pause"} size={22} /></span><div className="capture-copy"><strong>{data.monitoring ? `Saving to ${active?.name ?? "your session"}` : "Screenshot routing is paused"}</strong><span>{data.monitoring ? (data.pendingCount ? `${data.pendingCount} screenshot${data.pendingCount === 1 ? " is" : "s are"} finishing saving…` : "Take a screenshot as usual. We’ll put it in the right folder.") : "Start a session when you’re ready. Existing files stay where they are."}</span></div>
             {data.monitoring ? <button className="button secondary" disabled={busy} onClick={() => void perform(async () => { await invoke("pause_session"); setNotice("Paused. New screenshots will stay in your screenshot source folder."); })}><Icon kind="pause" size={16} /> Pause</button> : selected && <button className="button primary" disabled={busy || !desktop || !!selected.error} onClick={() => void perform(async () => { await invoke("start_session", { id: selected.id }); })}><Icon kind="play" size={16} /> Start session</button>}
           </section>
@@ -174,6 +182,19 @@ function App() {
         </form> : <form onSubmit={event => { event.preventDefault(); void perform(async () => { const id = await invoke<string>("create_session", { name }); select(id); setModal(null); setNotice("Session created. Start it or switch routing here when you’re ready."); }); }}>
           <label htmlFor="session-name">Session name</label><input autoFocus id="session-name" className="name-input" placeholder="e.g. DBMS · Assignment 04" value={name} required maxLength={80} onChange={event => setName(event.target.value)} disabled={busy} /><p className="field-help">Use an assignment, subject, or project name you’ll recognize.</p><div className="form-note"><Icon kind="folder" size={18} /><span>A new session folder will be created in<br /><strong className="break-path">{displayPath(data.storageDir)}</strong></span></div><div className="dialog-actions"><button type="button" className="button secondary" disabled={busy} onClick={() => { setModal(null); setError(null); }}>Cancel</button><button type="submit" className="button primary" disabled={busy || !name.trim()}>{busy ? "Creating…" : "Create session"}</button></div>
         </form>}
+      </dialog>
+      <dialog ref={deleteDialog} className="dialog delete-dialog" onCancel={event => { if (busy) event.preventDefault(); else setDeletePreview(null); }} onClose={() => setDeletePreview(null)}>
+        {deletePreview && <>
+          <div className="delete-icon"><Icon kind="trash" size={25} /></div>
+          <p className="eyebrow">REMOVE FINISHED WORK</p>
+          <h2>Delete “{deletePreview.name}”?</h2>
+          <p className="delete-copy">The entire session folder will move to your system Recycle Bin, including files ShotSort does not recognize.</p>
+          <div className="delete-summary"><span><strong>{deletePreview.fileCount}</strong> file{deletePreview.fileCount === 1 ? "" : "s"}</span><span><strong>{bytes(deletePreview.bytes)}</strong> total</span></div>
+          {deletePreview.isActive && <div className="banner warning"><strong>This session is active.</strong> Routing will pause first, and pending screenshots will stay in the source folder.</div>}
+          {error && <div className="banner error" role="alert">{error}</div>}
+          <div className="form-note">You can restore the folder from the Recycle Bin. Emptying the Recycle Bin is what finally reclaims disk space.</div>
+          <div className="dialog-actions"><button type="button" className="button secondary" disabled={busy} onClick={() => setDeletePreview(null)}>Keep session</button><button id="delete-session-button" type="button" className="button danger" disabled={busy} onClick={() => void perform(async () => { const deleted = deletePreview; await invoke("delete_session", { id: deleted.id }); const remaining = data.sessions.filter(session => session.id !== deleted.id); const nextId = remaining.some(session => session.id === data.activeSessionId) ? data.activeSessionId : remaining[0]?.id ?? null; selectedRef.current = nextId; setSelectedId(nextId); setDeletePreview(null); setNotice(`“${deleted.name}” was moved to the Recycle Bin.`); })}>{busy ? "Moving…" : "Move to Recycle Bin"}</button></div>
+        </>}
       </dialog>
     </div>
   );

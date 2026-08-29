@@ -19,6 +19,8 @@ pub struct Config {
     pub managed_storage: bool,
     pub active_session_id: Option<String>,
     pub sessions: Vec<Session>,
+    #[serde(default)]
+    pending_delete: Option<Session>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -61,6 +63,17 @@ pub struct Snapshot {
     pub sessions: Vec<SessionView>,
     pub screenshots: Vec<Screenshot>,
     pub last_error: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeletionPreview {
+    pub id: String,
+    pub name: String,
+    pub folder: PathBuf,
+    pub file_count: usize,
+    pub bytes: u64,
+    pub is_active: bool,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -142,9 +155,70 @@ fn overlaps(a: &Path, b: &Path) -> bool {
     a.starts_with(b) || b.starts_with(a)
 }
 
+fn write_config(path: &Path, config: &Config) -> Result<()> {
+    let parent = path.parent().ok_or("Invalid settings path")?;
+    fs::create_dir_all(parent).map_err(|e| format!("Cannot create settings folder: {e}"))?;
+    let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
+    let bytes = serde_json::to_vec_pretty(config).map_err(|e| e.to_string())?;
+    temp.write_all(&bytes)
+        .and_then(|_| temp.as_file().sync_all())
+        .map_err(|e| format!("Cannot save settings: {e}"))?;
+    temp.persist(path)
+        .map_err(|e| format!("Cannot replace settings: {e}"))?;
+    Ok(())
+}
+
+fn validate_session_folder(session: &Session) -> Result<()> {
+    let folder_name = session
+        .folder
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("Session folder has an invalid name.")?;
+    let expected_suffix = format!("-{}", session.id);
+    if !session.id.chars().all(|c| c.is_ascii_digit())
+        || !folder_name.starts_with("session-")
+        || !folder_name.ends_with(&expected_suffix)
+    {
+        return Err("ShotSort will only delete folders it created for sessions.".into());
+    }
+    let metadata = fs::symlink_metadata(&session.folder)
+        .map_err(|e| format!("Session folder is unavailable: {e}"))?;
+    if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
+        return Err("Session folder is not a regular directory. Nothing was deleted.".into());
+    }
+    let resolved = fs::canonicalize(&session.folder)
+        .map_err(|e| format!("Cannot verify the session folder: {e}"))?;
+    if resolved != session.folder {
+        return Err("Session folder moved or was replaced. Nothing was deleted.".into());
+    }
+    Ok(())
+}
+
+fn recursive_size(root: &Path) -> Result<(usize, u64)> {
+    let mut folders = vec![root.to_path_buf()];
+    let mut count = 0;
+    let mut bytes = 0u64;
+    while let Some(folder) = folders.pop() {
+        let entries = fs::read_dir(&folder)
+            .map_err(|e| format!("Cannot inspect {}: {e}", folder.display()))?;
+        for entry in entries {
+            let entry = entry.map_err(|e| format!("Cannot inspect a session item: {e}"))?;
+            let metadata = fs::symlink_metadata(entry.path())
+                .map_err(|e| format!("Cannot inspect {}: {e}", entry.path().display()))?;
+            if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() {
+                folders.push(entry.path());
+            } else {
+                count += 1;
+                bytes = bytes.saturating_add(metadata.len());
+            }
+        }
+    }
+    Ok((count, bytes))
+}
+
 impl Storage {
     pub fn load(config_path: PathBuf) -> Result<Self> {
-        let config = match fs::read(&config_path) {
+        let mut config = match fs::read(&config_path) {
             Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| {
                 format!(
                     "Saved ShotSort settings are unreadable; they have not been overwritten: {e}"
@@ -153,6 +227,16 @@ impl Storage {
             Err(e) if e.kind() == io::ErrorKind::NotFound => Config::default(),
             Err(e) => return Err(format!("Cannot load saved settings: {e}")),
         };
+        if let Some(pending) = config.pending_delete.clone() {
+            if !pending.folder.exists() {
+                config.sessions.retain(|session| session.id != pending.id);
+                if config.active_session_id.as_deref() == Some(pending.id.as_str()) {
+                    config.active_session_id = None;
+                }
+            }
+            config.pending_delete = None;
+            write_config(&config_path, &config)?;
+        }
         // Restoring session selection, but never resume file moves without the user.
         Ok(Self {
             config,
@@ -165,16 +249,7 @@ impl Storage {
     }
 
     fn save(&self, config: &Config) -> Result<()> {
-        let parent = self.config_path.parent().ok_or("Invalid settings path")?;
-        fs::create_dir_all(parent).map_err(|e| format!("Cannot create settings folder: {e}"))?;
-        let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
-        let bytes = serde_json::to_vec_pretty(config).map_err(|e| e.to_string())?;
-        temp.write_all(&bytes)
-            .and_then(|_| temp.as_file().sync_all())
-            .map_err(|e| format!("Cannot save settings: {e}"))?;
-        temp.persist(&self.config_path)
-            .map_err(|e| format!("Cannot replace settings: {e}"))?;
-        Ok(())
+        write_config(&self.config_path, config)
     }
 
     fn default_storage_dir(&self) -> PathBuf {
@@ -327,6 +402,65 @@ impl Storage {
     pub fn pause(&mut self) {
         self.monitoring = false;
         self.pending.clear();
+    }
+
+    pub fn deletion_preview(&self, id: &str) -> Result<DeletionPreview> {
+        let session = self.session(id)?;
+        validate_session_folder(session)?;
+        let (file_count, bytes) = recursive_size(&session.folder)?;
+        Ok(DeletionPreview {
+            id: session.id.clone(),
+            name: session.name.clone(),
+            folder: session.folder.clone(),
+            file_count,
+            bytes,
+            is_active: self.monitoring && self.config.active_session_id.as_deref() == Some(id),
+        })
+    }
+
+    pub fn delete_session(&mut self, id: &str) -> Result<()> {
+        self.delete_session_with(id, |folder| {
+            trash::delete(folder).map_err(|e| e.to_string())
+        })
+    }
+
+    fn delete_session_with<F>(&mut self, id: &str, move_folder: F) -> Result<()>
+    where
+        F: FnOnce(&Path) -> std::result::Result<(), String>,
+    {
+        let session = self.session(id)?.clone();
+        validate_session_folder(&session)?;
+        if self.monitoring && self.config.active_session_id.as_deref() == Some(id) {
+            self.pause();
+        } else {
+            self.pending.retain(|_, pending| pending.session_id != id);
+        }
+
+        let original = self.config.clone();
+        let mut journaled = original.clone();
+        journaled.pending_delete = Some(session.clone());
+        self.save(&journaled)?;
+        self.config = journaled;
+
+        if let Err(error) = move_folder(&session.folder) {
+            let rollback = self.save(&original);
+            self.config = original;
+            return match rollback {
+                Ok(()) => Err(format!("Could not move the session to the Recycle Bin: {error}. Nothing was deleted.")),
+                Err(save_error) => Err(format!("Could not move the session to the Recycle Bin: {error}. The folder is safe, but ShotSort could not clear its recovery record: {save_error}")),
+            };
+        }
+
+        let mut final_config = self.config.clone();
+        final_config.sessions.retain(|session| session.id != id);
+        if final_config.active_session_id.as_deref() == Some(id) {
+            final_config.active_session_id = None;
+        }
+        final_config.pending_delete = None;
+        self.config = final_config.clone();
+        self.save(&final_config).map_err(|error| {
+            format!("The folder was moved to the Recycle Bin, but session cleanup could not be saved: {error}. Restart ShotSort to finish cleanup.")
+        })
     }
 
     pub fn discover(&mut self) -> Result<()> {
@@ -830,5 +964,146 @@ mod tests {
         assert!(f.storage.configure(f.source.to_str().unwrap(), "").is_err());
         assert_eq!(f.storage.config.storage_dir, original);
         assert!(!f.storage.config.managed_storage);
+    }
+
+    #[test]
+    fn deletion_preview_counts_every_file_recursively() {
+        let mut f = Fixture::new();
+        let id = f.storage.create_session("Finished assignment").unwrap();
+        let folder = f.storage.session(&id).unwrap().folder.clone();
+        fs::write(folder.join("shot.png"), b"1234").unwrap();
+        fs::create_dir(folder.join("notes")).unwrap();
+        fs::write(folder.join("notes/readme.txt"), b"123456").unwrap();
+        let preview = f.storage.deletion_preview(&id).unwrap();
+        assert_eq!(preview.file_count, 2);
+        assert_eq!(preview.bytes, 10);
+        assert!(!preview.is_active);
+    }
+
+    #[test]
+    fn deleting_an_active_session_pauses_and_removes_its_record() {
+        let mut f = Fixture::new();
+        let id = f.storage.create_session("Finished assignment").unwrap();
+        let folder = f.storage.session(&id).unwrap().folder.clone();
+        fs::write(folder.join("shot.png"), b"finished work").unwrap();
+        f.storage.start(&id).unwrap();
+        assert!(f.storage.deletion_preview(&id).unwrap().is_active);
+        f.storage
+            .delete_session_with(&id, |folder| {
+                fs::remove_dir_all(folder).map_err(|e| e.to_string())
+            })
+            .unwrap();
+        assert!(!f.storage.monitoring);
+        assert!(f.storage.config.active_session_id.is_none());
+        assert!(f.storage.session(&id).is_err());
+        assert!(!folder.exists());
+        let restored = Storage::load(f.storage.config_path.clone()).unwrap();
+        assert!(restored.session(&id).is_err());
+    }
+
+    #[test]
+    fn failed_recycle_operation_keeps_folder_and_session_but_stays_paused() {
+        let mut f = Fixture::new();
+        let id = f.storage.create_session("Keep me").unwrap();
+        let folder = f.storage.session(&id).unwrap().folder.clone();
+        fs::write(folder.join("shot.png"), b"safe").unwrap();
+        f.storage.start(&id).unwrap();
+        let result = f
+            .storage
+            .delete_session_with(&id, |_| Err("Recycle Bin unavailable".into()));
+        assert!(result.is_err());
+        assert!(!f.storage.monitoring);
+        assert!(f.storage.session(&id).is_ok());
+        assert_eq!(fs::read(folder.join("shot.png")).unwrap(), b"safe");
+        assert!(f.storage.config.pending_delete.is_none());
+        let restored = Storage::load(f.storage.config_path.clone()).unwrap();
+        assert!(restored.session(&id).is_ok());
+    }
+
+    #[test]
+    fn deleting_an_inactive_session_does_not_interrupt_current_routing() {
+        let mut f = Fixture::new();
+        let old = f.storage.create_session("Old").unwrap();
+        let current = f.storage.create_session("Current").unwrap();
+        f.storage.start(&old).unwrap();
+        let source = f.source.join("in-flight.png");
+        fs::write(&source, b"stay in source").unwrap();
+        f.storage.discover().unwrap();
+        f.storage.start(&current).unwrap();
+        f.storage
+            .delete_session_with(&old, |folder| {
+                fs::remove_dir_all(folder).map_err(|e| e.to_string())
+            })
+            .unwrap();
+        assert!(f.storage.monitoring);
+        assert_eq!(
+            f.storage.config.active_session_id.as_deref(),
+            Some(current.as_str())
+        );
+        assert!(source.exists());
+        assert!(f
+            .storage
+            .pending
+            .values()
+            .all(|pending| pending.session_id != old));
+    }
+
+    #[test]
+    fn interrupted_successful_deletion_is_finished_on_restart() {
+        let mut f = Fixture::new();
+        let id = f.storage.create_session("Finished").unwrap();
+        let session = f.storage.session(&id).unwrap().clone();
+        let mut journaled = f.storage.config.clone();
+        journaled.pending_delete = Some(session.clone());
+        write_config(&f.storage.config_path, &journaled).unwrap();
+        fs::remove_dir_all(&session.folder).unwrap();
+        let restored = Storage::load(f.storage.config_path.clone()).unwrap();
+        assert!(restored.session(&id).is_err());
+        assert!(restored.config.pending_delete.is_none());
+    }
+
+    #[test]
+    fn interrupted_deletion_before_recycling_preserves_the_session() {
+        let mut f = Fixture::new();
+        let id = f.storage.create_session("Keep after interruption").unwrap();
+        let session = f.storage.session(&id).unwrap().clone();
+        fs::write(session.folder.join("keep.png"), b"still here").unwrap();
+        let mut journaled = f.storage.config.clone();
+        journaled.pending_delete = Some(session.clone());
+        write_config(&f.storage.config_path, &journaled).unwrap();
+        let restored = Storage::load(f.storage.config_path.clone()).unwrap();
+        assert!(restored.session(&id).is_ok());
+        assert_eq!(
+            fs::read(session.folder.join("keep.png")).unwrap(),
+            b"still here"
+        );
+        assert!(restored.config.pending_delete.is_none());
+    }
+
+    #[test]
+    fn deletion_rejects_a_session_record_pointing_at_an_arbitrary_folder() {
+        let mut f = Fixture::new();
+        let id = f.storage.create_session("Modified record").unwrap();
+        let arbitrary = f.destination.join("session-personal-files");
+        fs::create_dir(&arbitrary).unwrap();
+        fs::write(arbitrary.join("keep.txt"), b"never delete").unwrap();
+        f.storage
+            .config
+            .sessions
+            .iter_mut()
+            .find(|session| session.id == id)
+            .unwrap()
+            .folder = arbitrary.clone();
+        let mut called = false;
+        let result = f.storage.delete_session_with(&id, |_| {
+            called = true;
+            Ok(())
+        });
+        assert!(result.is_err());
+        assert!(!called);
+        assert_eq!(
+            fs::read(arbitrary.join("keep.txt")).unwrap(),
+            b"never delete"
+        );
     }
 }

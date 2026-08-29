@@ -44,6 +44,19 @@ mockIPC((command, input) => {
       state.sessions.unshift({ id, name: `Quick session ${number}`, folder: `${state.storageDir}\\${id}`, createdAt: Date.now(), files: [] });
       return id;
     }
+    case "get_deletion_preview": {
+      const session = state.sessions.find(session => session.id === args.id);
+      if (!session) throw new Error("Session not found.");
+      return { id: session.id, name: session.name, folder: session.folder, fileCount: session.files.length, bytes: session.files.reduce((sum, file) => sum + file.bytes, 0), isActive: state.monitoring && state.activeSessionId === session.id };
+    }
+    case "delete_session": {
+      const index = state.sessions.findIndex(session => session.id === args.id);
+      if (index < 0) throw new Error("Session not found.");
+      if (state.monitoring && state.activeSessionId === args.id) state.monitoring = false;
+      if (state.activeSessionId === args.id) state.activeSessionId = null;
+      state.sessions.splice(index, 1);
+      return;
+    }
     case "create_session": {
       const id = `session-${state.sessions.length + 1}`;
       state.sessions.unshift({ id, name: args.name.trim(), folder: `${state.storageDir}\\${id}`, createdAt: Date.now(), files: [] });

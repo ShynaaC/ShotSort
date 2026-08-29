@@ -10,6 +10,7 @@ This milestone is only screenshot storage and active sessions. PDF tools, OCR, d
 - Create named assignment sessions, each with its own folder.
 - Use **Quick session** to create an automatically named session without opening File Explorer or typing a name. Start it explicitly when ready; no files are deleted on close.
 - Start, pause, and explicitly switch the active session.
+- Delete a finished session after reviewing its full file count and size. Its folder goes to the system Recycle Bin.
 - Route new PNG, JPG, JPEG, and WebP files into the active session.
 - List screenshots, search filenames, show counts and storage totals, and open files or folders.
 - Persist folder settings and sessions locally. The app always reopens paused.
@@ -38,6 +39,7 @@ The repository is inside an outer directory also named shotsort. If you are in t
 4. Click **Start session**, then save a screenshot using your usual screenshot tool.
 5. It should appear in the session after the file has remained unchanged for about two seconds.
 6. Use **Pause** to stop routing. Selecting a session in the sidebar only changes the view; **Switch routing here** changes the destination.
+7. When a session is finished, click **Delete**, review the folder total, and confirm **Move to Recycle Bin**. Deleting the active session pauses routing first.
 
 Keep ShotSort open or minimized while working. Closing the window stops routing; system-tray/background-on-close support is not included.
 
@@ -53,6 +55,8 @@ Keep ShotSort open or minimized while working. Closing the window stops routing;
 - Settings are atomically saved to sessions.json in Tauri's app data directory. A damaged configuration is not silently overwritten.
 - Managed session folders live in a sessions directory alongside that settings file. Quick sessions use normal persistent storage, not the OS temporary directory. They remain after restarting; no expiry or automatic deletion is enabled.
 - Changing the storage root affects future sessions only. Existing session folders are not relocated.
+- Session deletion includes every file and subfolder in that session, not only recognized screenshots. ShotSort verifies the app-created folder name and path first, then moves the folder to the system Recycle Bin so it can be restored. Empty the Recycle Bin when you want the disk space reclaimed.
+- If deletion is interrupted, a saved recovery record reconciles the session on the next start. A failed Recycle Bin operation preserves both the folder and session record.
 - Moves in OneDrive or other synced folders can propagate to your cloud storage and other devices.
 - Storage totals are logical file sizes, not guaranteed reclaimable disk space.
 
@@ -73,12 +77,12 @@ cargo fmt -- --check
 cargo test --lib
 ```
 
-The Rust suite covers real temporary-file transfers, existing-file preservation, pause/resume, session persistence, in-flight session switching, name collisions, incomplete writes, missing destinations, path validation, damaged settings, and the actual background watcher. It also checks automatic folder creation, quick-session persistence, old configurations, preserving existing session locations, and failed folder creation.
+The Rust suite covers real temporary-file transfers, existing-file preservation, pause/resume, session persistence, in-flight session switching, name collisions, incomplete writes, missing destinations, path validation, damaged settings, and the actual background watcher. It also checks automatic folder creation, quick-session persistence, old configurations, preserving existing session locations, failed folder creation, deletion previews, active/inactive deletion behavior, failure rollback, folder-identity protection, and interrupted-deletion recovery.
 
 For repeatable interface checks, run the Vite dev server and open:
 
 `http://127.0.0.1:1420/tests/ui-harness.html`
 
-The clearly labelled development-only harness mocks IPC, never touches files, and is not included in the production build. It supports managed/custom folder setup, named and quick session creation, start/pause/switch, simulated incoming screenshots, and a failed-start scenario. Native behavior is verified separately by the Rust tests.
+The clearly labelled development-only harness mocks IPC, never touches files, and is not included in the production build. It supports managed/custom folder setup, named and quick session creation, start/pause/switch, simulated incoming screenshots, session deletion, and a failed-start scenario. Native behavior is verified separately by the Rust tests.
 
 Before distributing an installer, manually check native folder dialogs, opening images in the OS viewer, and the workflow with your real screenshot tool in the desktop app.

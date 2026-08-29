@@ -6,7 +6,7 @@ use std::{
     sync::{mpsc, Arc, Mutex},
     time::{Duration, Instant},
 };
-use storage::{Snapshot, Storage};
+use storage::{DeletionPreview, Snapshot, Storage};
 use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
@@ -50,6 +50,19 @@ async fn start_session(state: tauri::State<'_, AppState>, id: String) -> Result<
 #[tauri::command]
 async fn create_quick_session(state: tauri::State<'_, AppState>) -> Result<String, String> {
     lock(&state)?.create_quick_session()
+}
+
+#[tauri::command]
+async fn get_deletion_preview(
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<DeletionPreview, String> {
+    lock(&state)?.deletion_preview(&id)
+}
+
+#[tauri::command]
+async fn delete_session(state: tauri::State<'_, AppState>, id: String) -> Result<(), String> {
+    lock(&state)?.delete_session(&id)
 }
 
 #[tauri::command]
@@ -202,6 +215,8 @@ pub fn run() {
             configure_folders,
             create_session,
             create_quick_session,
+            get_deletion_preview,
+            delete_session,
             start_session,
             pause_session,
             choose_folder,
