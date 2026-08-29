@@ -74,6 +74,7 @@ pub struct DeletionPreview {
     pub file_count: usize,
     pub bytes: u64,
     pub is_active: bool,
+    pub folder_missing: bool,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -168,17 +169,20 @@ fn write_config(path: &Path, config: &Config) -> Result<()> {
     Ok(())
 }
 
-fn validate_session_folder(session: &Session) -> Result<()> {
+fn has_valid_session_folder_name(session: &Session) -> bool {
     let folder_name = session
         .folder
         .file_name()
         .and_then(|name| name.to_str())
-        .ok_or("Session folder has an invalid name.")?;
+        .unwrap_or_default();
     let expected_suffix = format!("-{}", session.id);
-    if !session.id.chars().all(|c| c.is_ascii_digit())
-        || !folder_name.starts_with("session-")
-        || !folder_name.ends_with(&expected_suffix)
-    {
+    session.id.chars().all(|c| c.is_ascii_digit())
+        && folder_name.starts_with("session-")
+        && folder_name.ends_with(&expected_suffix)
+}
+
+fn validate_session_folder(session: &Session) -> Result<()> {
+    if !has_valid_session_folder_name(session) {
         return Err("ShotSort will only delete folders it created for sessions.".into());
     }
     let metadata = fs::symlink_metadata(&session.folder)
@@ -192,6 +196,37 @@ fn validate_session_folder(session: &Session) -> Result<()> {
         return Err("Session folder moved or was replaced. Nothing was deleted.".into());
     }
     Ok(())
+}
+
+fn path_is_missing(path: &Path) -> Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(false),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(true),
+        Err(error) => Err(format!("Cannot inspect {}: {error}", path.display())),
+    }
+}
+
+fn same_path(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+    if let (Ok(a), Ok(b)) = (fs::canonicalize(a), fs::canonicalize(b)) {
+        return a == b;
+    }
+    #[cfg(windows)]
+    {
+        fn key(path: &Path) -> String {
+            let text = path.to_string_lossy();
+            text.strip_prefix(r"\\?\UNC\")
+                .map(|rest| format!(r"\\{rest}"))
+                .or_else(|| text.strip_prefix(r"\\?\").map(str::to_owned))
+                .unwrap_or_else(|| text.into_owned())
+                .to_lowercase()
+        }
+        return key(a) == key(b);
+    }
+    #[cfg(not(windows))]
+    false
 }
 
 fn recursive_size(root: &Path) -> Result<(usize, u64)> {
@@ -406,8 +441,13 @@ impl Storage {
 
     pub fn deletion_preview(&self, id: &str) -> Result<DeletionPreview> {
         let session = self.session(id)?;
-        validate_session_folder(session)?;
-        let (file_count, bytes) = recursive_size(&session.folder)?;
+        let folder_missing = path_is_missing(&session.folder)?;
+        let (file_count, bytes) = if folder_missing {
+            (0, 0)
+        } else {
+            validate_session_folder(session)?;
+            recursive_size(&session.folder)?
+        };
         Ok(DeletionPreview {
             id: session.id.clone(),
             name: session.name.clone(),
@@ -415,13 +455,71 @@ impl Storage {
             file_count,
             bytes,
             is_active: self.monitoring && self.config.active_session_id.as_deref() == Some(id),
+            folder_missing,
         })
     }
 
     pub fn delete_session(&mut self, id: &str) -> Result<()> {
+        let folder = self.session(id)?.folder.clone();
+        if path_is_missing(&folder)? {
+            return self.remove_session_records(&HashSet::from([id.to_owned()]));
+        }
         self.delete_session_with(id, |folder| {
             trash::delete(folder).map_err(|e| e.to_string())
         })
+    }
+
+    fn remove_session_records(&mut self, ids: &HashSet<String>) -> Result<()> {
+        let removed_active = self
+            .config
+            .active_session_id
+            .as_ref()
+            .is_some_and(|id| ids.contains(id));
+        if removed_active {
+            self.pause();
+        } else {
+            self.pending
+                .retain(|_, pending| !ids.contains(&pending.session_id));
+        }
+        let mut next = self.config.clone();
+        next.sessions.retain(|session| !ids.contains(&session.id));
+        if removed_active {
+            next.active_session_id = None;
+        }
+        self.save(&next)?;
+        self.config = next;
+        Ok(())
+    }
+
+    pub fn reconcile_missing_managed_sessions(&mut self) -> Result<()> {
+        let managed_root = self.default_storage_dir();
+        let mut missing = HashSet::new();
+        for session in &self.config.sessions {
+            if session
+                .folder
+                .parent()
+                .is_some_and(|parent| same_path(parent, &managed_root))
+                && has_valid_session_folder_name(session)
+                && path_is_missing(&session.folder)?
+            {
+                missing.insert(session.id.clone());
+            }
+        }
+        if !missing.is_empty() {
+            self.remove_session_records(&missing)?;
+        }
+        if self.config.managed_storage
+            && self
+                .config
+                .storage_dir
+                .as_deref()
+                .is_some_and(|folder| same_path(folder, &managed_root))
+            && path_is_missing(&managed_root)?
+        {
+            fs::create_dir_all(&managed_root)
+                .map_err(|error| format!("Cannot restore ShotSort's session storage: {error}"))?;
+        }
+        Ok(())
     }
 
     fn delete_session_with<F>(&mut self, id: &str, move_folder: F) -> Result<()>
@@ -1105,5 +1203,49 @@ mod tests {
             fs::read(arbitrary.join("keep.txt")).unwrap(),
             b"never delete"
         );
+    }
+
+    #[test]
+    fn missing_managed_session_is_removed_and_storage_root_is_restored() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("screenshots");
+        fs::create_dir(&source).unwrap();
+        let config_path = temp.path().join("app-data/sessions.json");
+        let mut storage = Storage::load(config_path.clone()).unwrap();
+        storage.configure(source.to_str().unwrap(), "").unwrap();
+        let id = storage.create_session("Deleted in File Explorer").unwrap();
+        let session_folder = storage.session(&id).unwrap().folder.clone();
+        let managed_root = storage.default_storage_dir();
+        storage.start(&id).unwrap();
+        fs::remove_dir_all(&managed_root).unwrap();
+
+        storage.reconcile_missing_managed_sessions().unwrap();
+
+        assert!(storage.session(&id).is_err());
+        assert!(storage.config.active_session_id.is_none());
+        assert!(!storage.monitoring);
+        assert!(managed_root.is_dir());
+        assert!(!session_folder.exists());
+        let restored = Storage::load(config_path).unwrap();
+        assert!(restored.session(&id).is_err());
+    }
+
+    #[test]
+    fn missing_custom_session_is_preserved_until_record_is_removed() {
+        let mut f = Fixture::new();
+        let id = f.storage.create_session("Disconnected drive").unwrap();
+        let folder = f.storage.session(&id).unwrap().folder.clone();
+        fs::remove_dir(&folder).unwrap();
+
+        f.storage.reconcile_missing_managed_sessions().unwrap();
+        assert!(f.storage.session(&id).is_ok());
+        let preview = f.storage.deletion_preview(&id).unwrap();
+        assert!(preview.folder_missing);
+        assert_eq!(preview.file_count, 0);
+        f.storage.delete_session(&id).unwrap();
+
+        assert!(f.storage.session(&id).is_err());
+        let restored = Storage::load(f.storage.config_path.clone()).unwrap();
+        assert!(restored.session(&id).is_err());
     }
 }

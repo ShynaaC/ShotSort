@@ -6,7 +6,7 @@ import { mockIPC } from "@tauri-apps/api/mocks";
 if (!import.meta.env.DEV) throw new Error("The test harness must not run in production.");
 Object.assign(window, { isTauri: true });
 type FileFixture = { name: string; bytes: number; modifiedAt: number };
-type SessionFixture = { id: string; name: string; folder: string; createdAt: number; files: FileFixture[] };
+type SessionFixture = { id: string; name: string; folder: string; createdAt: number; files: FileFixture[]; missing?: boolean };
 const state = {
   sourceDir: null as string | null,
   storageDir: null as string | null,
@@ -26,8 +26,8 @@ mockIPC((command, input) => {
   switch (command) {
     case "get_state": return {
       ...state,
-      sessions: state.sessions.map(({ files, ...session }) => ({ ...session, count: files.length, bytes: files.reduce((sum, file) => sum + file.bytes, 0), error: null })),
-      screenshots: state.sessions.find(session => session.id === args.selectedId)?.files ?? [],
+      sessions: state.sessions.map(({ files, missing, ...session }) => ({ ...session, count: missing ? 0 : files.length, bytes: missing ? 0 : files.reduce((sum, file) => sum + file.bytes, 0), error: missing ? "The system cannot find the path specified." : null })),
+      screenshots: state.sessions.find(session => session.id === args.selectedId && !session.missing)?.files ?? [],
       pendingCount: 0,
       lastError: null,
     };
@@ -47,7 +47,7 @@ mockIPC((command, input) => {
     case "get_deletion_preview": {
       const session = state.sessions.find(session => session.id === args.id);
       if (!session) throw new Error("Session not found.");
-      return { id: session.id, name: session.name, folder: session.folder, fileCount: session.files.length, bytes: session.files.reduce((sum, file) => sum + file.bytes, 0), isActive: state.monitoring && state.activeSessionId === session.id };
+      return { id: session.id, name: session.name, folder: session.folder, fileCount: session.missing ? 0 : session.files.length, bytes: session.missing ? 0 : session.files.reduce((sum, file) => sum + file.bytes, 0), isActive: state.monitoring && state.activeSessionId === session.id, folderMissing: !!session.missing };
     }
     case "delete_session": {
       const index = state.sessions.findIndex(session => session.id === args.id);
@@ -75,5 +75,6 @@ document.querySelector("#capture-fixture")!.addEventListener("click", () => {
   if (state.monitoring && session) session.files.unshift({ name: `Screenshot-${++shotNumber}.png`, bytes: 128 * 1024, modifiedAt: Date.now() });
 });
 document.querySelector("#fail-start")!.addEventListener("click", () => { failStart = true; });
+document.querySelector("#missing-folder")!.addEventListener("click", () => { if (state.sessions[0]) state.sessions[0].missing = true; });
 const { default: App } = await import("../src/App");
 createRoot(document.getElementById("root")!).render(<React.StrictMode><App /></React.StrictMode>);

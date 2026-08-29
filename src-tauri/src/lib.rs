@@ -25,7 +25,9 @@ async fn get_state(
     state: tauri::State<'_, AppState>,
     selected_id: Option<String>,
 ) -> Result<Snapshot, String> {
-    Ok(lock(&state)?.snapshot(selected_id.as_deref()))
+    let mut storage = lock(&state)?;
+    storage.reconcile_missing_managed_sessions()?;
+    Ok(storage.snapshot(selected_id.as_deref()))
 }
 
 #[tauri::command]

@@ -57,6 +57,7 @@ Keep ShotSort open or minimized while working. Closing the window stops routing;
 - Changing the storage root affects future sessions only. Existing session folders are not relocated.
 - Session deletion includes every file and subfolder in that session, not only recognized screenshots. ShotSort verifies the app-created folder name and path first, then moves the folder to the system Recycle Bin so it can be restored. Empty the Recycle Bin when you want the disk space reclaimed.
 - If deletion is interrupted, a saved recovery record reconciles the session on the next start. A failed Recycle Bin operation preserves both the folder and session record.
+- If you manually remove a session folder from ShotSort's managed AppData storage, its stale session record is removed automatically. A missing custom or external folder is preserved in case the drive is temporarily disconnected; use **Delete → Remove record** to forget it explicitly.
 - Moves in OneDrive or other synced folders can propagate to your cloud storage and other devices.
 - Storage totals are logical file sizes, not guaranteed reclaimable disk space.
 
@@ -83,6 +84,6 @@ For repeatable interface checks, run the Vite dev server and open:
 
 `http://127.0.0.1:1420/tests/ui-harness.html`
 
-The clearly labelled development-only harness mocks IPC, never touches files, and is not included in the production build. It supports managed/custom folder setup, named and quick session creation, start/pause/switch, simulated incoming screenshots, session deletion, and a failed-start scenario. Native behavior is verified separately by the Rust tests.
+The clearly labelled development-only harness mocks IPC, never touches files, and is not included in the production build. It supports managed/custom folder setup, named and quick session creation, start/pause/switch, simulated incoming screenshots, missing-folder recovery, session deletion, and a failed-start scenario. Native behavior is verified separately by the Rust tests.
 
 Before distributing an installer, manually check native folder dialogs, opening images in the OS viewer, and the workflow with your real screenshot tool in the desktop app.
