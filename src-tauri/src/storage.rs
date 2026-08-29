@@ -47,6 +47,8 @@ pub struct SessionView {
     pub session: Session,
     pub count: usize,
     pub bytes: u64,
+    pub storage_file_count: usize,
+    pub storage_bytes: u64,
     pub error: Option<String>,
 }
 
@@ -685,6 +687,14 @@ impl Storage {
     }
 
     pub fn snapshot(&self, selected_id: Option<&str>) -> Snapshot {
+        self.snapshot_with_storage(selected_id, false)
+    }
+
+    pub fn snapshot_with_storage(
+        &self,
+        selected_id: Option<&str>,
+        include_storage: bool,
+    ) -> Snapshot {
         let mut screenshots = Vec::new();
         let sessions = self
             .config
@@ -697,6 +707,11 @@ impl Storage {
                 };
                 let count = files.len();
                 let bytes = files.iter().map(|(_, stamp)| stamp.bytes).sum();
+                let (storage_file_count, storage_bytes) = if include_storage && error.is_none() {
+                    recursive_size(&session.folder).unwrap_or((count, bytes))
+                } else {
+                    (count, bytes)
+                };
                 if selected_id == Some(session.id.as_str()) {
                     screenshots = files
                         .into_iter()
@@ -720,6 +735,8 @@ impl Storage {
                     session: session.clone(),
                     count,
                     bytes,
+                    storage_file_count,
+                    storage_bytes,
                     error,
                 }
             })
@@ -1076,6 +1093,11 @@ mod tests {
         assert_eq!(preview.file_count, 2);
         assert_eq!(preview.bytes, 10);
         assert!(!preview.is_active);
+        let snapshot = f.storage.snapshot_with_storage(Some(&id), true);
+        assert_eq!(snapshot.sessions[0].count, 1);
+        assert_eq!(snapshot.sessions[0].bytes, 4);
+        assert_eq!(snapshot.sessions[0].storage_file_count, 2);
+        assert_eq!(snapshot.sessions[0].storage_bytes, 10);
     }
 
     #[test]

@@ -13,6 +13,7 @@ This milestone is only screenshot storage and active sessions. PDF tools, OCR, d
 - Delete a finished session after reviewing its full file count and size. Its folder goes to the system Recycle Bin.
 - Route new PNG, JPG, JPEG, and WebP files into the active session.
 - List screenshots, search filenames, show counts and storage totals, and open files or folders.
+- Review all session storage in one cleanup view, sort by size or age, and open the existing deletion confirmation from any row.
 - Persist folder settings and sessions locally. The app always reopens paused.
 - Prevent multiple ShotSort instances from routing the same files.
 
@@ -84,6 +85,6 @@ For repeatable interface checks, run the Vite dev server and open:
 
 `http://127.0.0.1:1420/tests/ui-harness.html`
 
-The clearly labelled development-only harness mocks IPC, never touches files, and is not included in the production build. It supports managed/custom folder setup, named and quick session creation, start/pause/switch, simulated incoming screenshots, missing-folder recovery, session deletion, and a failed-start scenario. Native behavior is verified separately by the Rust tests.
+The clearly labelled development-only harness mocks IPC, never touches files, and is not included in the production build. It supports managed/custom folder setup, named and quick session creation, start/pause/switch, simulated incoming screenshots, missing-folder recovery, storage-cleanup sorting, session deletion, and a failed-start scenario. Native behavior is verified separately by the Rust tests.
 
 Before distributing an installer, manually check native folder dialogs, opening images in the OS viewer, and the workflow with your real screenshot tool in the desktop app.

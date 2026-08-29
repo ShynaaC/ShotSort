@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import "./App.css";
 
-type Session = { id: string; name: string; folder: string; createdAt: number; count: number; bytes: number; error: string | null };
+type Session = { id: string; name: string; folder: string; createdAt: number; count: number; bytes: number; storageFileCount: number; storageBytes: number; error: string | null };
 type Screenshot = { name: string; bytes: number; modifiedAt: number };
 type DeletionPreview = { id: string; name: string; folder: string; fileCount: number; bytes: number; isActive: boolean; folderMissing: boolean };
 type Snapshot = {
@@ -22,7 +22,7 @@ function bytes(value: number) {
 function displayPath(path: string | null) {
   return path?.replace(/^\\\\\?\\UNC\\/, "\\\\").replace(/^\\\\\?\\/, "") ?? "Not selected";
 }
-function Icon({ kind, size = 20 }: { kind: "folder" | "image" | "plus" | "play" | "pause" | "settings" | "arrow" | "check" | "close" | "trash"; size?: number }) {
+function Icon({ kind, size = 20 }: { kind: "folder" | "image" | "plus" | "play" | "pause" | "settings" | "arrow" | "check" | "close" | "trash" | "storage"; size?: number }) {
   const paths = {
     folder: <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10H3V7Z" />,
     image: <><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="8" cy="8" r="1.5" /><path d="m3 17 5-5 4 4 3-3 6 6" /></>,
@@ -34,6 +34,7 @@ function Icon({ kind, size = 20 }: { kind: "folder" | "image" | "plus" | "play" 
     check: <path d="m5 12 4 4L19 6" />,
     close: <path d="m6 6 12 12M6 18 18 6" />,
     trash: <><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13" /><path d="M10 11v5M14 11v5" /></>,
+    storage: <><ellipse cx="12" cy="5" rx="8" ry="3" /><path d="M4 5v7c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12v7c0 1.7 3.6 3 8 3s8-1.3 8-3v-7" /></>,
   };
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[kind]}</svg>;
 }
@@ -52,19 +53,25 @@ function App() {
   const [name, setName] = useState("");
   const [filter, setFilter] = useState("");
   const [deletePreview, setDeletePreview] = useState<DeletionPreview | null>(null);
+  const [cleanup, setCleanup] = useState(false);
+  const [cleanupSort, setCleanupSort] = useState<"largest" | "oldest" | "newest">("largest");
+  const [cleanupLoading, setCleanupLoading] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null);
   const deleteDialog = useRef<HTMLDialogElement>(null);
   const selectedRef = useRef<string | null>(null);
+  const cleanupRef = useRef(false);
   const requestRef = useRef(0);
 
   const refresh = useCallback(async () => {
     if (!desktop) return;
     const request = ++requestRef.current;
     const selection = selectedRef.current;
+    const includeStorage = cleanupRef.current;
     try {
-      const next = await invoke<Snapshot>("get_state", { selectedId: selection });
-      if (request !== requestRef.current || selection !== selectedRef.current) return;
+      const next = await invoke<Snapshot>("get_state", { selectedId: selection, includeStorage });
+      if (request !== requestRef.current || selection !== selectedRef.current || includeStorage !== cleanupRef.current) return;
       setData(next);
+      if (includeStorage) setCleanupLoading(false);
       if (!selection || !next.sessions.some(session => session.id === selection)) {
         const id = next.sessions.some(session => session.id === next.activeSessionId) ? next.activeSessionId : next.sessions[0]?.id ?? null;
         selectedRef.current = id;
@@ -96,6 +103,19 @@ function App() {
     setSelectedId(id);
     setData(current => ({ ...current, screenshots: [] }));
     setFilter("");
+    cleanupRef.current = false;
+    setCleanup(false);
+  }
+  function openCleanup() {
+    cleanupRef.current = true;
+    setCleanup(true);
+    setCleanupLoading(true);
+    setFilter("");
+    void refresh();
+  }
+  function closeCleanup() {
+    cleanupRef.current = false;
+    setCleanup(false);
   }
   async function perform(action: () => Promise<void>) {
     if (busy || !desktop) return;
@@ -124,6 +144,9 @@ function App() {
   const files = data.screenshots.filter(file => file.name.toLowerCase().includes(filter.toLowerCase()));
   const count = data.sessions.reduce((sum, session) => sum + session.count, 0);
   const totalBytes = data.sessions.reduce((sum, session) => sum + session.bytes, 0);
+  const cleanupBytes = data.sessions.reduce((sum, session) => sum + session.storageBytes, 0);
+  const cleanupFiles = data.sessions.reduce((sum, session) => sum + session.storageFileCount, 0);
+  const cleanupSessions = [...data.sessions].sort((a, b) => cleanupSort === "largest" ? b.storageBytes - a.storageBytes || a.name.localeCompare(b.name) : cleanupSort === "oldest" ? a.createdAt - b.createdAt : b.createdAt - a.createdAt);
 
   return (
     <div className="app-shell">
@@ -133,13 +156,13 @@ function App() {
         <button className="new-session" disabled={!configured || busy || !desktop} onClick={() => { setName(""); setError(null); setModal("session"); }}><Icon kind="plus" size={18} /> New session</button>
         <button className="new-session quick-session" disabled={!configured || busy || !desktop} onClick={() => void perform(async () => { const id = await invoke<string>("create_quick_session"); select(id); setNotice(data.monitoring ? "Quick session created. Use Switch routing here when ready; your current session is still active." : "Quick session created. Click Start session when ready. Your screenshots stay saved after closing the app."); })}><Icon kind="image" size={18} /> Quick session</button>
         <nav className="session-nav" aria-label="Sessions">
-          {data.sessions.map(session => <button key={session.id} className={`session-item ${selectedId === session.id ? "selected" : ""}`} onClick={() => select(session.id)} aria-current={selectedId === session.id ? "page" : undefined}>
+          {data.sessions.map(session => <button key={session.id} className={`session-item ${!cleanup && selectedId === session.id ? "selected" : ""}`} onClick={() => select(session.id)} aria-current={!cleanup && selectedId === session.id ? "page" : undefined}>
             <Icon kind="folder" size={19} /><span className="session-name">{session.name}<small>{session.count} screenshot{session.count !== 1 ? "s" : ""}</small></span>
             {data.monitoring && data.activeSessionId === session.id && <span className="live-dot" title="Active session" aria-label="Active session" />}
           </button>)}
           {!data.sessions.length && <p className="sidebar-empty">Your assignment sessions<br />will appear here.</p>}
         </nav>
-        <div className="sidebar-bottom"><div className="local-note"><Icon kind="check" size={16} /><span>On your laptop. In your control.</span></div><button className="settings-button" disabled={!desktop || busy || data.monitoring} onClick={folderSetup} title={data.monitoring ? "Pause the active session to change folders" : "Choose screenshot and storage folders"}><Icon kind="settings" size={18} /> Folder setup</button><span className="version">SHOTSORT / 0.1</span></div>
+        <div className="sidebar-bottom"><button className={`settings-button cleanup-button ${cleanup ? "selected" : ""}`} disabled={!configured || busy} aria-current={cleanup ? "page" : undefined} onClick={openCleanup}><Icon kind="storage" size={18} /> Storage cleanup</button><div className="local-note"><Icon kind="check" size={16} /><span>On your laptop. In your control.</span></div><button className="settings-button" disabled={!desktop || busy || data.monitoring} onClick={folderSetup} title={data.monitoring ? "Pause the active session to change folders" : "Choose screenshot and storage folders"}><Icon kind="settings" size={18} /> Folder setup</button><span className="version">SHOTSORT / 0.1</span></div>
       </aside>
       <main className="workspace">
         <header className="topbar"><span>YOUR SCREENSHOT WORKSPACE</span><span className="offline-badge"><span /> Local storage</span></header>
@@ -148,11 +171,11 @@ function App() {
           {error && !modal && !deletePreview && <div className="banner error" role="alert"><span>{error}</span><button aria-label="Dismiss error" onClick={() => setError(null)}><Icon kind="close" size={16} /></button></div>}
           {data.lastError && <div className="banner error" role="alert">{data.lastError}</div>}
           {notice && <div className="banner info" role="status">{notice}</div>}
-          <div className="page-title"><div><p className="eyebrow">LESS CLUTTER. MORE FOCUS.</p><h1>{selected?.name ?? "Make room for your work."}</h1><p className="subtitle">{selected ? "Your screenshots, together in one session." : "Keep screenshots with the assignment they belong to."}</p></div>{selected && <div className="title-actions"><button className="button danger-secondary" disabled={busy} onClick={() => void perform(async () => { setDeletePreview(await invoke<DeletionPreview>("get_deletion_preview", { id: selected.id })); })}><Icon kind="trash" size={16} /> Delete</button><button className="button secondary" disabled={busy || !!selected.error} onClick={() => void perform(async () => { await invoke("open_session_folder", { id: selected.id }); })}><Icon kind="folder" size={17} /> Open folder <Icon kind="arrow" size={15} /></button></div>}</div>
+          <div className="page-title"><div><p className="eyebrow">{cleanup ? "SEE WHAT IS USING SPACE" : "LESS CLUTTER. MORE FOCUS."}</p><h1>{cleanup ? "Storage cleanup" : selected?.name ?? "Make room for your work."}</h1><p className="subtitle">{cleanup ? "Review every session before deciding what to remove." : selected ? "Your screenshots, together in one session." : "Keep screenshots with the assignment they belong to."}</p></div>{cleanup ? selected && <button className="button secondary" onClick={closeCleanup}><Icon kind="arrow" size={15} /> Back to session</button> : selected && <div className="title-actions"><button className="button danger-secondary" disabled={busy} onClick={() => void perform(async () => { setDeletePreview(await invoke<DeletionPreview>("get_deletion_preview", { id: selected.id })); })}><Icon kind="trash" size={16} /> Delete</button><button className="button secondary" disabled={busy || !!selected.error} onClick={() => void perform(async () => { await invoke("open_session_folder", { id: selected.id }); })}><Icon kind="folder" size={17} /> Open folder <Icon kind="arrow" size={15} /></button></div>}</div>
           <section className={`capture-bar ${data.monitoring ? "running" : ""}`} aria-label="Screenshot routing"><span className={`capture-icon ${data.monitoring ? "running" : ""}`}><Icon kind={data.monitoring ? "image" : "pause"} size={22} /></span><div className="capture-copy"><strong>{data.monitoring ? `Saving to ${active?.name ?? "your session"}` : "Screenshot routing is paused"}</strong><span>{data.monitoring ? (data.pendingCount ? `${data.pendingCount} screenshot${data.pendingCount === 1 ? " is" : "s are"} finishing saving…` : "Take a screenshot as usual. We’ll put it in the right folder.") : "Start a session when you’re ready. Existing files stay where they are."}</span></div>
-            {data.monitoring ? <button className="button secondary" disabled={busy} onClick={() => void perform(async () => { await invoke("pause_session"); setNotice("Paused. New screenshots will stay in your screenshot source folder."); })}><Icon kind="pause" size={16} /> Pause</button> : selected && <button className="button primary" disabled={busy || !desktop || !!selected.error} onClick={() => void perform(async () => { await invoke("start_session", { id: selected.id }); })}><Icon kind="play" size={16} /> Start session</button>}
+            {data.monitoring ? <button className="button secondary" disabled={busy} onClick={() => void perform(async () => { await invoke("pause_session"); setNotice("Paused. New screenshots will stay in your screenshot source folder."); })}><Icon kind="pause" size={16} /> Pause</button> : !cleanup && selected && <button className="button primary" disabled={busy || !desktop || !!selected.error} onClick={() => void perform(async () => { await invoke("start_session", { id: selected.id }); })}><Icon kind="play" size={16} /> Start session</button>}
           </section>
-          {loading ? <div className="empty-state"><span className="eyebrow">OPENING YOUR WORKSPACE</span><h2>Loading sessions…</h2></div> : !configured ? <section className="setup-card">
+          {cleanup ? <section className="cleanup-view" aria-label="Storage cleanup"><div className="cleanup-overview"><div><span className="eyebrow">TOTAL SESSION STORAGE</span><strong>{cleanupLoading ? "Calculating…" : bytes(cleanupBytes)}</strong><small>{cleanupLoading ? "Checking every session folder" : `${cleanupFiles} file${cleanupFiles === 1 ? "" : "s"} across ${data.sessions.length} session${data.sessions.length === 1 ? "" : "s"}`}</small></div><div className="cleanup-note"><Icon kind="storage" size={22} /><span>Totals include every file inside each session, including nested and unrecognized files.</span></div></div><div className="cleanup-toolbar"><div><h2>Sessions</h2><span>Deleting always asks for confirmation.</span></div><label>Sort by <select aria-label="Sort cleanup sessions" value={cleanupSort} disabled={cleanupLoading} onChange={event => setCleanupSort(event.target.value as typeof cleanupSort)}><option value="largest">Largest first</option><option value="oldest">Oldest first</option><option value="newest">Newest first</option></select></label></div>{cleanupLoading ? <div className="cleanup-loading" role="status">Calculating folder sizes…</div> : cleanupSessions.length ? <div className="cleanup-list">{cleanupSessions.map(session => <article className="cleanup-row" key={session.id}><span className="cleanup-folder"><Icon kind="folder" size={21} /></span><div className="cleanup-session"><strong>{session.name}</strong><span>{session.storageFileCount} file{session.storageFileCount === 1 ? "" : "s"} · {session.count} screenshot{session.count === 1 ? "" : "s"} · Created {new Date(session.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</span>{session.error && <small>Folder unavailable</small>}</div>{data.monitoring && data.activeSessionId === session.id && <span className="active-chip">ACTIVE</span>}<strong className="cleanup-size">{bytes(session.storageBytes)}</strong><div className="cleanup-actions"><button className="button secondary" onClick={() => select(session.id)}>View</button><button className="button danger-secondary" disabled={busy} aria-label={`Delete ${session.name}`} onClick={() => void perform(async () => { setDeletePreview(await invoke<DeletionPreview>("get_deletion_preview", { id: session.id })); })}><Icon kind="trash" size={15} /> Delete</button></div></article>)}</div> : <div className="empty-state cleanup-empty"><span className="empty-icon"><Icon kind="storage" size={31} /></span><h2>No session storage yet</h2><p>Create a session and take screenshots. Its storage will appear here.</p></div>}</section> : loading ? <div className="empty-state"><span className="eyebrow">OPENING YOUR WORKSPACE</span><h2>Loading sessions…</h2></div> : !configured ? <section className="setup-card">
             <div className="setup-illustration" aria-hidden="true"><span className="paper paper-back"><Icon kind="image" size={30} /></span><span className="paper paper-front"><Icon kind="folder" size={36} /></span></div><span className="eyebrow">A QUICK, ONE-TIME SETUP</span><h2>We’ll handle the folders.</h2><p>Choose where your screenshot tool already saves files. ShotSort creates and manages session storage for you.</p>
             <div className="setup-steps"><div><span>01</span><strong>Choose your screenshot source</strong><p>Use its existing folder. No new folder needed.</p></div><div><span>02</span><strong>Create a session in the app</strong><p>Pick a name or use Quick session. We create its folder.</p></div></div>
             <button className="button primary" onClick={folderSetup} disabled={!desktop || busy}><Icon kind="folder" size={17} /> Set up screenshots</button><small>No uploads. Nothing is deleted when you close the app.</small>

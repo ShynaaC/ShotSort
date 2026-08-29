@@ -24,10 +24,11 @@ fn lock(state: &AppState) -> Result<std::sync::MutexGuard<'_, Storage>, String> 
 async fn get_state(
     state: tauri::State<'_, AppState>,
     selected_id: Option<String>,
+    include_storage: Option<bool>,
 ) -> Result<Snapshot, String> {
     let mut storage = lock(&state)?;
     storage.reconcile_missing_managed_sessions()?;
-    Ok(storage.snapshot(selected_id.as_deref()))
+    Ok(storage.snapshot_with_storage(selected_id.as_deref(), include_storage.unwrap_or(false)))
 }
 
 #[tauri::command]

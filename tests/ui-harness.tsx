@@ -26,7 +26,7 @@ mockIPC((command, input) => {
   switch (command) {
     case "get_state": return {
       ...state,
-      sessions: state.sessions.map(({ files, missing, ...session }) => ({ ...session, count: missing ? 0 : files.length, bytes: missing ? 0 : files.reduce((sum, file) => sum + file.bytes, 0), error: missing ? "The system cannot find the path specified." : null })),
+      sessions: state.sessions.map(({ files, missing, ...session }) => ({ ...session, count: missing ? 0 : files.length, bytes: missing ? 0 : files.reduce((sum, file) => sum + file.bytes, 0), storageFileCount: missing ? 0 : files.length, storageBytes: missing ? 0 : files.reduce((sum, file) => sum + file.bytes, 0), error: missing ? "The system cannot find the path specified." : null })),
       screenshots: state.sessions.find(session => session.id === args.selectedId && !session.missing)?.files ?? [],
       pendingCount: 0,
       lastError: null,
@@ -76,5 +76,18 @@ document.querySelector("#capture-fixture")!.addEventListener("click", () => {
 });
 document.querySelector("#fail-start")!.addEventListener("click", () => { failStart = true; });
 document.querySelector("#missing-folder")!.addEventListener("click", () => { if (state.sessions[0]) state.sessions[0].missing = true; });
+document.querySelector("#seed-cleanup")!.addEventListener("click", () => {
+  state.sourceDir = "C:\\ShotSort-test\\Screenshots";
+  state.storageDir = state.defaultStorageDir;
+  state.managedStorage = true;
+  const day = 24 * 60 * 60 * 1000;
+  state.sessions = [
+    { id: "session-notes", name: "Lecture notes", folder: `${state.storageDir}\\session-notes`, createdAt: Date.now() - day, files: [{ name: "notes.png", bytes: 1024 * 1024, modifiedAt: Date.now() }] },
+    { id: "session-report", name: "Final report", folder: `${state.storageDir}\\session-report`, createdAt: Date.now() - 10 * day, files: [{ name: "report.png", bytes: 9 * 1024 * 1024, modifiedAt: Date.now() }] },
+    { id: "session-dbms", name: "DBMS lab", folder: `${state.storageDir}\\session-dbms`, createdAt: Date.now() - 4 * day, files: [{ name: "schema.png", bytes: 4 * 1024 * 1024, modifiedAt: Date.now() }] },
+  ];
+  state.activeSessionId = "session-dbms";
+  state.monitoring = true;
+});
 const { default: App } = await import("../src/App");
 createRoot(document.getElementById("root")!).render(<React.StrictMode><App /></React.StrictMode>);
