@@ -33,6 +33,25 @@ The repository is inside an outer directory also named shotsort. If you are in t
 
 `npm run dev` runs only the web interface. The browser cannot access the native screenshot storage commands and shows a notice instead of pretending to move files.
 
+### Build and open the production app
+
+Use the Tauri CLI for production builds. Do not use `cargo build --release` directly: a plain Cargo build uses Tauri's development URL and the resulting window will try to connect to `localhost`.
+
+```powershell
+npm run tauri build -- --no-bundle
+.\src-tauri\target\release\shotsort.exe
+```
+
+The `--no-bundle` build creates the standalone Windows executable without downloading installer tooling. Run `npm run tauri build` instead when you need an installer.
+
+ShotSort allows only one running instance. Closing its window hides it in the system tray, so an older background instance can intercept attempts to open a newly built executable. Before testing a new build, choose **Quit ShotSort** from the tray menu. If the old process is stuck and cannot be reached from the tray, close it with:
+
+```powershell
+taskkill /F /IM shotsort.exe
+```
+
+Then launch the newly built executable again. The window, taskbar, executable, and tray use the icon assets in `src-tauri/icons`.
+
 ## First session
 
 1. Choose a dedicated screenshot source, such as your actual Pictures/Screenshots folder. Check where your screenshot tool really saves files; it may use OneDrive.
@@ -67,6 +86,7 @@ Keep ShotSort running while working. Closing the window hides it in the system t
 
 - React + TypeScript + Vite for the interface.
 - Tauri 2 + Rust for native commands and file operations.
+- The window and tray load the generated PNG icon directly, preventing development builds from retaining a stale fallback icon.
 - notify for native folder events, with periodic reconciliation for missed events.
 - JSON for this small amount of session metadata; no database server or additional runtime.
 - No production browser mocks, external fonts, image services, or cloud backend.
